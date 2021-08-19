@@ -1,0 +1,46 @@
+service: loi-notify
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: ${opt:stage, 'development'}
+  region: 'ap-southeast-2'
+  memorySize: 128
+  timeout: 28
+  logRetentionInDays: 90
+  deploymentBucket:
+    name: ${ssm:deployment-artifacts-bucket}
+  environment:
+    NEW_RELIC_NO_CONFIG_FILE: true
+    NEW_RELIC_SERVERLESS_MODE_ENABLED: true
+    NEW_RELIC_APP_NAME: ${self:service}-${self:provider.stage}
+    NEW_RELIC_ACCOUNT_ID: ${ssm:newrelic-account-id}
+    NEW_RELIC_TRUSTED_ACCOUNT_KEY: ${ssm:newrelic-account-id}
+    NEW_RELIC_DISTRIBUTED_TRACING_ENABLED: true
+
+package:
+  excludeDevDependencies: false
+  exclude:
+    - '**'
+  include:
+    - dist
+
+plugins:
+  - serverless-prune-plugin
+  - serverless-plugin-common-excludes
+  - serverless-plugin-include-dependencies
+  - serverless-iam-roles-per-function
+  - serverless-pseudo-parameters
+  - serverless-domain-manager
+  - serverless-log-forwarding
+
+custom:
+  logForwarding:
+    destinationARN: ${ssm:newrelic-log-ingestion}
+    filterPattern: '?REPORT ?NR_LAMBDA_MONITORING ?"Task timed out" ?RequestId'
+  serverless-iam-roles-per-function:
+    defaultInherit: true
+
+functions:
+  sync-locations:
+    handler: dist/endpoints/sync-locations.handler
