@@ -11,6 +11,7 @@ provider:
   deploymentBucket:
     name: ${ssm:deployment-artifacts-bucket}
   environment:
+    LOI_PAGE_URL: https://www.health.govt.nz/our-work/diseases-and-conditions/covid-19-novel-coronavirus/covid-19-health-advice-public/contact-tracing-covid-19/covid-19-contact-tracing-locations-interest
     CHANGES_TOPIC_ARN: ${self:custom.changes-topic.arn}
     NEW_RELIC_NO_CONFIG_FILE: true
     NEW_RELIC_SERVERLESS_MODE_ENABLED: true
@@ -50,12 +51,11 @@ functions:
   sync-locations:
     handler: dist/endpoints/sync-locations.handler
     environment:
-      LOI_PAGE_URL: https://www.health.govt.nz/our-work/diseases-and-conditions/covid-19-novel-coronavirus/covid-19-health-advice-public/contact-tracing-covid-19/covid-19-contact-tracing-locations-interest
       STORAGE_BUCKET_NAME: ${self:custom.storage-bucket.name}
     iamRoleStatements:
       - Effect: 'Allow'
         Action:
-          -  sns:Publish
+          - sns:Publish
         Resource: ${self:custom.changes-topic.arn}
       - Effect: 'Allow'
         Action:
@@ -68,15 +68,20 @@ functions:
     events:
       - sns:
           arn: ${self:custom.changes-topic.arn}
+    environment:
+      TWITTER_CONSUMER_KEY: ${ssm:/${self:service}/${self:provider.stage}/twitter/consumer-key~true}
+      TWITTER_CONSUMER_SECRET: ${ssm:/${self:service}/${self:provider.stage}/twitter/consumer-secret~true}
+      TWITTER_ACCESS_TOKEN_KEY: ${ssm:/${self:service}/${self:provider.stage}/twitter/access-key~true}
+      TWITTER_ACCESS_TOKEN_SECRET: ${ssm:/${self:service}/${self:provider.stage}/twitter/access-secret~true}
 
 resources:
   Resources:
     ChangesTopic:
       Type: AWS::SNS::Topic
-      Properties: 
+      Properties:
         TopicName: ${self:custom.changes-topic.name}
 
     StorageBucket:
       Type: AWS::S3::Bucket
-      Properties: 
+      Properties:
         BucketName: ${self:custom.storage-bucket.name}
