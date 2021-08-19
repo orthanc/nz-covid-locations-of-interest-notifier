@@ -4,19 +4,8 @@ import { parse, HTMLElement } from 'node-html-parser';
 import {promises as fs} from 'fs';
 import keyBy from 'lodash.keyby';
 import isEqual from 'lodash.isequal';
-
-interface LocationOfInterest {
-  location: string;
-  address: string;
-  day: string;
-  times: string;
-  instructions?: string;
-  dateAdded: string;
-}
-interface LocationsOfInterest {
-  group: string;
-  locations: Record<string, Record<string, LocationOfInterest>>;
-}
+import { ChangeType, LocationOfInterest, LocationOfInterestChange, LocationsOfInterest } from '../../types';
+import {SNS, S3} from 'aws-sdk';
 
 const parseRow = (row: HTMLElement): LocationOfInterest => {
   let [location, address, day, times, instructions, dateAdded]: [string?, string?, string?, string?, string?, string?, ...any] = row.querySelectorAll('td').map(cell => cell.textContent).map(str => str.trim().normalize());
@@ -51,7 +40,8 @@ const parseLoiPage = (html: string): Record<string, LocationsOfInterest> => {
   return JSON.parse(JSON.stringify(locations));
 }
 
-const diffLocations = (baseline: Record<string, LocationsOfInterest>, current: Record<string, LocationsOfInterest>) => {
+const diffLocations = (baseline: Record<string, LocationsOfInterest>, current: Record<string, LocationsOfInterest>): Array<LocationOfInterestChange> => {
+  const changes: Array<LocationOfInterestChange> = []
   Object.entries(current).forEach(([group, currentLocationsOfInterest]) => {
     const baselineLocationsOfInterest = baseline[group] == null ? {} : baseline[group].locations;
     Object.entries(currentLocationsOfInterest.locations).forEach(([name, currentInstances]) => {
@@ -60,9 +50,17 @@ const diffLocations = (baseline: Record<string, LocationsOfInterest>, current: R
         const baselineInstance = baselineInstances[key];
 
         if (baselineInstance == null) {
-          console.log(`New LOI: ${JSON.stringify(currentInstance)}`)
+          changes.push({
+            changeType: ChangeType.ADDED,
+            group,
+            location: currentInstance,
+          });
         } else if (!isEqual(baselineInstance, currentInstance)) {
-          console.log(`Updated LOI: ${JSON.stringify(currentInstance)}`);
+          changes.push({
+            changeType: ChangeType.UPDATED,
+            group,
+            location: currentInstance,
+          });
         }
       })
     })
@@ -76,21 +74,43 @@ const diffLocations = (baseline: Record<string, LocationsOfInterest>, current: R
         const currentInstance = currentInstances[key];
 
         if (currentInstance == null) {
-          console.log(`Removed LOI: ${JSON.stringify(baselineInstance)}`)
+          changes.push({
+            changeType: ChangeType.REMOVED,
+            group,
+            location: baselineInstance,
+          });
         }
       })
     })
   })
+  return changes;
 }
 
 const rawHandler = async () => {
   const result = await fetch(process.env.LOI_PAGE_URL ?? '');
   const html = await result.text();
   const locations = parseLoiPage(html);
-  // await fs.writeFile('vaseline.json', JSON.stringify(locations, undefined, 2));
-  const baseline = JSON.parse(await fs.readFile('baseline.json', 'utf-8'));
 
-  diffLocations(baseline, locations);
+  const s3 = new S3();
+  const s3Result = await s3.getObject({
+    Bucket: process.env.STORAGE_BUCKET_NAME ?? '',
+    Key: 'baseline.json'
+  }).promise();
+  // await fs.writeFile('vaseline.json', JSON.stringify(locations, undefined, 2));
+  const baseline = s3Result.Body == null ? {} : JSON.parse(s3Result.Body.toString('utf-8'));
+
+  const changes = diffLocations(baseline, locations);
+  console.log(JSON.stringify(changes, undefined, 2));
+
+  console.log(`ARN; ${process.env.CHANGES_TOPIC_ARN ?? ''}`);
+  const sns = new SNS();
+  await Promise.all(changes.map(async (change) => {
+    await sns.publish({
+      TopicArn: process.env.CHANGES_TOPIC_ARN ?? '',
+      Message: JSON.stringify(change),
+    }).promise();
+  }))
+
 };
 
 export const handler = newrelic.setLambdaHandler(rawHandler);
