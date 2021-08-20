@@ -19,9 +19,9 @@ const rawHandler = async (event: SNSEvent) => {
 
   switch (message.changeType) {
     case ChangeType.ADDED:
+      break;
     case ChangeType.REMOVED:
     case ChangeType.UPDATED:
-      break;
     default:
       return;
   }

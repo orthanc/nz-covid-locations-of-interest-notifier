@@ -50,6 +50,8 @@ custom:
 functions:
   sync-locations:
     handler: dist/endpoints/sync-locations.handler
+    events:
+      - schedule: rate(15 minutes)
     environment:
       STORAGE_BUCKET_NAME: ${self:custom.storage-bucket.name}
     iamRoleStatements:
