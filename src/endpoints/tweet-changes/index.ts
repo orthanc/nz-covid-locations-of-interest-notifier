@@ -38,7 +38,8 @@ ${message.location.location}
 ${message.location.day} ${message.location.times}
 
 ${
-  message.changeType === ChangeType.REMOVED ? '' : message.location.instructions
+  /*message.changeType === ChangeType.REMOVED ? '' : */
+  message.location.instructions
 }`;
 
   if (tweetText.length > 250) {

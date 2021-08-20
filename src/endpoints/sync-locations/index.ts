@@ -12,34 +12,76 @@ import {
 } from '../../types';
 import { SNS, S3 } from 'aws-sdk';
 
-const parseRow = (row: HTMLElement): LocationOfInterest => {
-  let [location, address, day, times, instructions, dateAdded]: [
-    string?,
-    string?,
-    string?,
-    string?,
-    string?,
-    string?,
-    ...any
-  ] = row
+interface IndexMap {
+  locationIndex: number;
+  addressIndex: number;
+  dayIndex: number;
+  timesIndex: number;
+  instructionsIndex: number;
+  dateAddedIndex: number;
+}
+
+const headerTests: Array<[RegExp, boolean?]> = [
+  [/location/i],
+  [/address/i],
+  [/^day$/i],
+  [/^time/i],
+  [/what to do/i, false],
+  [/date.added/, false],
+];
+
+const parseRow = (indexes: IndexMap, row: HTMLElement): LocationOfInterest => {
+  const cells = row
     .querySelectorAll('td')
     .map((cell) => cell.textContent)
     .map((str) => str.trim().normalize());
-  if (dateAdded == null) {
-    dateAdded = instructions;
-    instructions = undefined;
-  }
-  if (!instructions) {
-    instructions = undefined;
-  }
+  const location = cells[indexes.locationIndex];
+  const address = cells[indexes.addressIndex];
+  const day = cells[indexes.dayIndex];
+  const times = cells[indexes.timesIndex];
+  const instructions: string | undefined = cells[indexes.instructionsIndex];
+  const dateAdded = cells[indexes.dateAddedIndex];
   return { location, address, day, times, instructions, dateAdded };
 };
+const parseHeader = (table: HTMLElement): IndexMap => {
+  const headers = table
+    .querySelector('thead')
+    .querySelector('tr')
+    .querySelectorAll('th')
+    .map((cell) => cell.textContent.trim().toLowerCase());
+
+  const [
+    locationIndex,
+    addressIndex,
+    dayIndex,
+    timesIndex,
+    instructionsIndex,
+    dateAddedIndex,
+  ] = headerTests.map(([test, optional]) => {
+    const index = headers.findIndex((header) => test.test(header));
+    if (optional !== false && index === -1) {
+      throw new Error(`Cannot find index for ${test}`);
+    }
+    return index;
+  });
+
+  return {
+    locationIndex,
+    addressIndex,
+    dayIndex,
+    timesIndex,
+    instructionsIndex,
+    dateAddedIndex,
+  };
+};
+
 const parseTable = (table: HTMLElement): LocationsOfInterest => {
   const group = table.querySelector('caption').textContent;
+  const indexes = parseHeader(table);
   const locations = table
     .querySelector('tbody')
     .querySelectorAll('tr')
-    .map((row) => parseRow(row));
+    .map((row) => parseRow(indexes, row));
   const indexedLocations = locations.reduce<
     Record<string, Record<string, LocationOfInterest>>
   >((acc, location) => {
@@ -134,7 +176,7 @@ const rawHandler = async () => {
     s3Result.Body == null ? {} : JSON.parse(s3Result.Body.toString('utf-8'));
 
   const changes = diffLocations(baseline, locations);
-  console.log(JSON.stringify({ changes }));
+  console.log(JSON.stringify({ changes }, undefined, 2));
 
   const sns = new SNS();
   await Promise.all(
