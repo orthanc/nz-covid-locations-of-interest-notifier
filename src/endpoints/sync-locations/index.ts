@@ -1,7 +1,7 @@
 import newrelic from 'newrelic';
 import fetch from 'node-fetch';
 import { parse, HTMLElement } from 'node-html-parser';
-// import { promises as fs } from 'fs';
+import { promises as fs } from 'fs';
 import isEqual from 'lodash.isequal';
 import {
   ChangeType,
@@ -114,13 +114,16 @@ const indexLocationsOfInterest = (
   const indexedLocations = locations.reduce<
     Record<string, Record<string, LocationOfInterest>>
   >((acc, location) => {
-    const arr = acc[location.location] ?? {};
+    const locationKey = location.location
+      .replace(/[^a-zA-Z0-9]/g, '')
+      .toLowerCase();
+    const arr = acc[locationKey] ?? {};
     arr[
       (location.day + ' - ' + location.times)
         .replace(/\./g, ':')
         .replace(/\s/g, '')
     ] = location;
-    acc[location.location] = arr;
+    acc[locationKey] = arr;
     return acc;
   }, {});
 
