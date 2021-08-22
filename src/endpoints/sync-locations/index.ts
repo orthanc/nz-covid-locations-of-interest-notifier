@@ -97,6 +97,10 @@ const parseLoiPage = (
   const mainSection = root.querySelector('#block-system-main');
   const tables = mainSection.querySelectorAll('table');
 
+  if (tables.length !== 1) {
+    throw new Error('Only one table expected');
+  }
+
   const result: Record<string, Array<LocationOfInterest>> = {};
   tables
     .map((table) => parseTable(table))
