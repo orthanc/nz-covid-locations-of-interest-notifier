@@ -7,15 +7,10 @@ export interface LocationOfInterest {
   dateAdded: string;
 }
 
-export interface LocationsOfInterest {
-  group: string;
-  locations: Record<string, Record<string, LocationOfInterest>>;
-}
-
 export enum ChangeType {
   ADDED = 'added',
   REMOVED = 'removed',
-  UPDATED = 'updated'
+  UPDATED = 'updated',
 }
 export interface LocationOfInterestChange {
   changeType: ChangeType;

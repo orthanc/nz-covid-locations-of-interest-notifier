@@ -35,12 +35,12 @@ const rawHandler = async (event: SNSEvent) => {
 
 ${message.location.location}
 
-${message.location.day} ${message.location.times}
-
-${
-  /*message.changeType === ChangeType.REMOVED ? '' : */
-  message.location.instructions
-}`;
+${message.location.day} ${message.location.times}${
+    /*message.changeType === ChangeType.REMOVED ? '' : */
+    message.location.instructions == null
+      ? ''
+      : '\n\n' + message.location.instructions
+  }`;
 
   if (tweetText.length > 250) {
     tweetText = tweetText.substring(0, 250) + '\u{2026}';

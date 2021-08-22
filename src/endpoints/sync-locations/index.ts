@@ -1,14 +1,12 @@
 import newrelic from 'newrelic';
 import fetch from 'node-fetch';
 import { parse, HTMLElement } from 'node-html-parser';
-import { promises as fs } from 'fs';
-import keyBy from 'lodash.keyby';
+// import { promises as fs } from 'fs';
 import isEqual from 'lodash.isequal';
 import {
   ChangeType,
   LocationOfInterest,
   LocationOfInterestChange,
-  LocationsOfInterest,
 } from '../../types';
 import { SNS, S3 } from 'aws-sdk';
 
@@ -20,6 +18,11 @@ interface IndexMap {
   instructionsIndex: number;
   dateAddedIndex: number;
 }
+
+type IndexedLocationsOfInterest = Record<
+  string,
+  Record<string, LocationOfInterest>
+>;
 
 const headerTests: Array<[RegExp, boolean?]> = [
   [/location/i],
@@ -75,87 +78,107 @@ const parseHeader = (table: HTMLElement): IndexMap => {
   };
 };
 
-const parseTable = (table: HTMLElement): LocationsOfInterest => {
-  const group = table.querySelector('caption').textContent;
+const parseTable = (
+  table: HTMLElement
+): { group: string; locations: Array<LocationOfInterest> } => {
+  const group = table.querySelector('caption')?.textContent ?? '';
   const indexes = parseHeader(table);
   const locations = table
     .querySelector('tbody')
     .querySelectorAll('tr')
     .map((row) => parseRow(indexes, row));
-  const indexedLocations = locations.reduce<
-    Record<string, Record<string, LocationOfInterest>>
-  >((acc, location) => {
-    const arr = acc[location.location] ?? {};
-    arr[location.day + ' - ' + location.times] = location;
-    acc[location.location] = arr;
-    return acc;
-  }, {});
-  return { group, locations: indexedLocations };
+  return { group, locations };
 };
 
-const parseLoiPage = (html: string): Record<string, LocationsOfInterest> => {
+const parseLoiPage = (
+  html: string
+): Record<string, Array<LocationOfInterest>> => {
   const root = parse(html);
   const mainSection = root.querySelector('#block-system-main');
   const tables = mainSection.querySelectorAll('table');
 
-  const locations = keyBy(
-    tables.map((table) => parseTable(table)),
-    (loi) => loi.group
-  );
-  return JSON.parse(JSON.stringify(locations));
+  const result: Record<string, Array<LocationOfInterest>> = {};
+  tables
+    .map((table) => parseTable(table))
+    .forEach(({ group, locations }) => (result[group] = locations));
+  return JSON.parse(JSON.stringify(result));
+};
+
+const indexLocationsOfInterest = (
+  locations: Array<LocationOfInterest>
+): IndexedLocationsOfInterest => {
+  const indexedLocations = locations.reduce<
+    Record<string, Record<string, LocationOfInterest>>
+  >((acc, location) => {
+    const arr = acc[location.location] ?? {};
+    arr[
+      (location.day + ' - ' + location.times)
+        .replace(/\./g, ':')
+        .replace(/\s/g, '')
+    ] = location;
+    acc[location.location] = arr;
+    return acc;
+  }, {});
+
+  return indexedLocations;
 };
 
 const diffLocations = (
-  baseline: Record<string, LocationsOfInterest>,
-  current: Record<string, LocationsOfInterest>
+  baseline: Record<string, Array<LocationOfInterest>>,
+  current: Record<string, Array<LocationOfInterest>>
 ): Array<LocationOfInterestChange> => {
   const changes: Array<LocationOfInterestChange> = [];
   Object.entries(current).forEach(([group, currentLocationsOfInterest]) => {
     const baselineLocationsOfInterest =
-      baseline[group] == null ? {} : baseline[group].locations;
-    Object.entries(currentLocationsOfInterest.locations).forEach(
-      ([name, currentInstances]) => {
-        const baselineInstances = baselineLocationsOfInterest[name] ?? {};
-        Object.entries(currentInstances).forEach(([key, currentInstance]) => {
-          const baselineInstance = baselineInstances[key];
-
-          if (baselineInstance == null) {
-            changes.push({
-              changeType: ChangeType.ADDED,
-              group,
-              location: currentInstance,
-            });
-          } else if (!isEqual(baselineInstance, currentInstance)) {
-            changes.push({
-              changeType: ChangeType.UPDATED,
-              group,
-              location: currentInstance,
-            });
-          }
-        });
-      }
+      baseline[group] == null ? [] : baseline[group];
+    const indexedCurrent = indexLocationsOfInterest(currentLocationsOfInterest);
+    const indexedBaseline = indexLocationsOfInterest(
+      baselineLocationsOfInterest
     );
+    Object.entries(indexedCurrent).forEach(([name, currentInstances]) => {
+      const baselineInstances = indexedBaseline[name] ?? {};
+      Object.entries(currentInstances).forEach(([key, currentInstance]) => {
+        const baselineInstance = baselineInstances[key];
+
+        if (baselineInstance == null) {
+          changes.push({
+            changeType: ChangeType.ADDED,
+            group,
+            location: currentInstance,
+          });
+        } else if (!isEqual(baselineInstance, currentInstance)) {
+          changes.push({
+            changeType: ChangeType.UPDATED,
+            group,
+            location: currentInstance,
+          });
+        }
+      });
+    });
   });
 
   Object.entries(baseline).forEach(([group, baselineLocationsOfInterest]) => {
     const currentLocationsOfInterest =
-      current[group] == null ? {} : current[group].locations;
-    Object.entries(baselineLocationsOfInterest.locations).forEach(
-      ([name, baselineInstances]) => {
-        const currentInstances = currentLocationsOfInterest[name] ?? {};
-        Object.entries(baselineInstances).forEach(([key, baselineInstance]) => {
-          const currentInstance = currentInstances[key];
+      current[group] == null ? [] : current[group];
 
-          if (currentInstance == null) {
-            changes.push({
-              changeType: ChangeType.REMOVED,
-              group,
-              location: baselineInstance,
-            });
-          }
-        });
-      }
+    const indexedCurrent = indexLocationsOfInterest(currentLocationsOfInterest);
+    const indexedBaseline = indexLocationsOfInterest(
+      baselineLocationsOfInterest
     );
+    Object.entries(indexedBaseline).forEach(([name, baselineInstances]) => {
+      const currentInstances = indexedCurrent[name] ?? {};
+      Object.entries(baselineInstances).forEach(([key, baselineInstance]) => {
+        const currentInstance = currentInstances[key];
+
+        if (currentInstance == null) {
+          changes.push({
+            changeType: ChangeType.REMOVED,
+            group,
+            location: baselineInstance,
+          });
+        }
+      });
+    });
   });
   return changes;
 };
@@ -164,6 +187,7 @@ const rawHandler = async () => {
   const result = await fetch(process.env.LOI_PAGE_URL ?? '');
   const html = await result.text();
   const locations = parseLoiPage(html);
+  // await fs.writeFile('baseline.json', JSON.stringify(locations, undefined, 2));
 
   const s3 = new S3();
   const s3Result = await s3
@@ -174,6 +198,9 @@ const rawHandler = async () => {
     .promise();
   const baseline =
     s3Result.Body == null ? {} : JSON.parse(s3Result.Body.toString('utf-8'));
+  // const baseline = JSON.parse(
+  //   await fs.readFile('locations-of-interest-flat.json', 'utf-8')
+  // );
 
   const changes = diffLocations(baseline, locations);
   console.log(JSON.stringify({ changes }, undefined, 2));
